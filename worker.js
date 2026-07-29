@@ -77,7 +77,7 @@ export default {
       }
 
       const body = await request.json().catch(() => ({}));
-      const { action, org_id, post_id, member_id, query, full_name, bio, contact } = body;
+      const { action, org_id, post_id, member_id, query, full_name, bio, contact, new_role } = body;
 
       // ── Action: Soft Delete / Unlink Post ──
       if (action === 'delete_post') {
@@ -189,8 +189,70 @@ export default {
         return new Response(JSON.stringify({ success: true, message: 'Contact saved.' }), { status: 200, headers });
       }
 
-      return new Response(JSON.stringify({ success: false, message: 'Invalid action.' }), { status: 400, headers });
+      // ── NEW: Action: Change Member Role ──
+      if (action === 'change_member_role') {
+        // Validate new_role
+        if (!['admin', 'member'].includes(new_role)) {
+          return new Response(
+            JSON.stringify({ success: false, message: 'Invalid role. Must be "admin" or "member".' }),
+            { status: 400, headers }
+          );
+        }
 
+        const canManage = await checkOrgAdminPermission(supabase, user.id, org_id);
+        if (!canManage) {
+          return new Response(
+            JSON.stringify({ success: false, message: 'Permission denied. You are not an admin.' }),
+            { status: 403, headers }
+          );
+        }
+
+        // Prevent removing the last admin
+        if (new_role === 'member') {
+          const { count, error: countErr } = await supabase
+            .from('organizations')
+            .select('*', { count: 'exact', head: true })
+            .eq('org_id', org_id)
+            .eq('member_role', 'admin');
+
+          if (countErr) {
+            return new Response(
+              JSON.stringify({ success: false, message: 'Failed to check admin count.' }),
+              { status: 500, headers }
+            );
+          }
+
+          if (count <= 1) {
+            return new Response(
+              JSON.stringify({ success: false, message: 'Cannot remove the last admin. Assign another admin first.' }),
+              { status: 400, headers }
+            );
+          }
+        }
+
+        const { error } = await supabase
+          .from('organizations')
+          .update({ member_role: new_role })
+          .eq('org_id', org_id)
+          .eq('member_id', member_id);
+
+        if (error) {
+          console.error('Role update error:', error);
+          return new Response(
+            JSON.stringify({ success: false, message: 'Failed to update role: ' + error.message }),
+            { status: 500, headers }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({ success: true, message: `Member role updated to "${new_role}".` }),
+          { status: 200, headers }
+        );
+      }
+
+      // ── Invalid action ──
+      return new Response(JSON.stringify({ success: false, message: 'Invalid action.' }), { status: 400, headers });
+      
     } catch (err) {
       console.error('Worker Execution Exception:', err);
 
@@ -208,4 +270,3 @@ export default {
     }
   }
 };
-
