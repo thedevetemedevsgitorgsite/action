@@ -263,7 +263,7 @@ export default {
         : "We're experiencing temporary technical issues processing your request. Please try again shortly.";
 
       return new Response(
-        JSON.stringify({ success: false, message: err.message || "unknown error" }),
+        JSON.stringify({ success: false, message: userFriendlyMessage }),
         { status: 500, headers }
       );
     }
