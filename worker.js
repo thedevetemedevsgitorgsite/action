@@ -249,6 +249,91 @@ export default {
           { status: 200, headers }
         );
       }
+      
+      
+      
+            // ── Action: Switch Account Type to 'org' ──
+            // ── Action: Switch Account Type to 'org' ──
+      if (action === 'switch_account_type') {
+        // Target specific org/user ID or default to logged-in user
+        const targetUserId = org_id || user.id;
+
+        // If targetUserId is NOT the current user, enforce admin permission
+        if (targetUserId !== user.id) {
+          const canManage = await checkOrgAdminPermission(supabase, user.id, targetUserId);
+          if (!canManage) {
+            return new Response(
+              JSON.stringify({ success: false, message: 'Permission denied.' }),
+              { status: 403, headers }
+            );
+          }
+        }
+
+        // 1. Fetch current profile state
+        const { data: profile, error: profErr } = await supabase
+          .from('profiles')
+          .select('id, type, org_eligible')
+          .eq('id', targetUserId)
+          .maybeSingle();
+
+        if (profErr || !profile) {
+          return new Response(
+            JSON.stringify({ success: false, message: 'User profile not found.' }),
+            { status: 404, headers }
+          );
+        }
+
+        if (profile.type === 'org') {
+          return new Response(
+            JSON.stringify({ success: true, message: 'Account is already an organization account.' }),
+            { status: 200, headers }
+          );
+        }
+
+        // 2. Check eligibility (org_eligible flag OR subscriber count >= 30)
+        let isEligible = profile.org_eligible === true;
+
+        if (!isEligible) {
+          const { count: subCount, error: subErr } = await supabase
+            .from('subscribers')
+            .select('*', { count: 'exact', head: true })
+            .eq('seller_id', targetUserId);
+
+          if (subErr) throw subErr;
+
+          if ((subCount || 0) >= 30) {
+            isEligible = true;
+          }
+        }
+
+        if (!isEligible) {
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              message: 'Account not eligible. Requires "org_eligible" flag or at least 30 subscribers.' 
+            }),
+            { status: 403, headers }
+          );
+        }
+
+        // 3. Promote account to 'org'
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ type: 'org', org_eligible: true })
+          .eq('id', targetUserId);
+
+        if (updateErr) throw updateErr;
+
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            message: 'Account successfully upgraded to Organization profile!' 
+          }),
+          { status: 200, headers }
+        );
+      }
+
+
 
       return new Response(JSON.stringify({ success: false, message: 'Invalid action.' }), { status: 400, headers });
 
@@ -263,7 +348,7 @@ export default {
         : "We're experiencing temporary technical issues processing your request. Please try again shortly.";
 
       return new Response(
-        JSON.stringify({ success: false, message: userFriendlyMessage }),
+        JSON.stringify({ success: false, message: userFriendlyMessage}),
         { status: 500, headers }
       );
     }
