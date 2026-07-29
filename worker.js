@@ -89,7 +89,6 @@ export default {
           );
         }
 
-        // Set org_id = null instead of deleting post record
         const { error } = await supabase
           .from('posts')
           .update({ org_id: null })
@@ -189,9 +188,8 @@ export default {
         return new Response(JSON.stringify({ success: true, message: 'Contact saved.' }), { status: 200, headers });
       }
 
-      // ── NEW: Action: Change Member Role ──
+      // ── Action: Change Member Role ──
       if (action === 'change_member_role') {
-        // Validate new_role
         if (!['admin', 'member'].includes(new_role)) {
           return new Response(
             JSON.stringify({ success: false, message: 'Invalid role. Must be "admin" or "member".' }),
@@ -207,24 +205,32 @@ export default {
           );
         }
 
-        // Prevent removing the last admin
-        if (new_role === 'member') {
+        const { data: targetMember } = await supabase
+          .from('organizations')
+          .select('member_role')
+          .eq('org_id', org_id)
+          .eq('member_id', member_id)
+          .maybeSingle();
+
+        if (!targetMember) {
+          return new Response(
+            JSON.stringify({ success: false, message: 'Member not found in organization.' }),
+            { status: 404, headers }
+          );
+        }
+
+        if (targetMember.member_role === 'admin' && new_role === 'member') {
           const { count, error: countErr } = await supabase
             .from('organizations')
             .select('*', { count: 'exact', head: true })
             .eq('org_id', org_id)
             .eq('member_role', 'admin');
 
-          if (countErr) {
-            return new Response(
-              JSON.stringify({ success: false, message: 'Failed to check admin count.' }),
-              { status: 500, headers }
-            );
-          }
+          if (countErr) throw countErr;
 
-          if (count <= 1) {
+          if (count <= 1 && org_id !== member_id) {
             return new Response(
-              JSON.stringify({ success: false, message: 'Cannot remove the last admin. Assign another admin first.' }),
+              JSON.stringify({ success: false, message: 'Cannot demote the last admin. Assign another admin first.' }),
               { status: 400, headers }
             );
           }
@@ -236,13 +242,7 @@ export default {
           .eq('org_id', org_id)
           .eq('member_id', member_id);
 
-        if (error) {
-          console.error('Role update error:', error);
-          return new Response(
-            JSON.stringify({ success: false, message: 'Failed to update role: ' + error.message }),
-            { status: 500, headers }
-          );
-        }
+        if (error) throw error;
 
         return new Response(
           JSON.stringify({ success: true, message: `Member role updated to "${new_role}".` }),
@@ -250,9 +250,8 @@ export default {
         );
       }
 
-      // ── Invalid action ──
       return new Response(JSON.stringify({ success: false, message: 'Invalid action.' }), { status: 400, headers });
-      
+
     } catch (err) {
       console.error('Worker Execution Exception:', err);
 
@@ -270,3 +269,4 @@ export default {
     }
   }
 };
+
